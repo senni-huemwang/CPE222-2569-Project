@@ -1,0 +1,9 @@
+# Vivado generated files & logs
+vivado_proj/.Xil/
+vivado_proj/*.cache/
+vivado_proj/*.hw/
+vivado_proj/*.ip_user_files/
+vivado_proj/*.runs/
+vivado_proj/*.sim/
+vivado_proj/*.jou
+vivado_proj/*.log
