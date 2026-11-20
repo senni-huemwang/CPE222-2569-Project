@@ -1,17 +1,17 @@
 `timescale 1ns / 1ps
 //////////////////////////////////////////////////////////////////////////////////
 // Module: pigeon_rom
-// Description: Dual-frame 48x48 12-bit RGB444 sprite ROM for the Pixel Pigeon AI.
+// Description: Dual-frame 64x64 12-bit RGB444 sprite BRAM ROM for BirdPlayer.
 //              12'hF0F represents transparent pixels.
 //////////////////////////////////////////////////////////////////////////////////
 module pigeon_rom (
     input  wire        clk,
-    input  wire        pose,       // 0 = dive/wings-down, 1 = flap/wings-up
-    input  wire [5:0]  x,          // 0..47
-    input  wire [5:0]  y,          // 0..47
+    input  wire        pose,       // 0 = dive, 1 = flap
+    input  wire [5:0]  x,          // 0..63
+    input  wire [5:0]  y,          // 0..63
     output reg  [11:0] rgb_out
 );
-    localparam integer SPRITE_PIXELS = 48 * 48; // 2304
+    localparam integer SPRITE_PIXELS = 64 * 64; // 4096
 
     (* rom_style = "block" *) reg [11:0] rom_down [0:SPRITE_PIXELS-1];
     (* rom_style = "block" *) reg [11:0] rom_up   [0:SPRITE_PIXELS-1];
@@ -21,15 +21,11 @@ module pigeon_rom (
         $readmemh("pigeon_up.mem",   rom_up);
     end
 
-    // addr = y * 48 + x = (y * 32) + (y * 16) + x (shift-add, no DSP needed)
-    wire [11:0] addr = ({1'b0, y, 5'b00000}) + ({2'b00, y, 4'b0000}) + {6'd0, x};
+    wire [11:0] addr = {y, x};
 
     always @(posedge clk) begin
-        if (pose) begin
-            rgb_out <= rom_up[addr];
-        end else begin
-            rgb_out <= rom_down[addr];
-        end
+        if (pose) rgb_out <= rom_up[addr];
+        else      rgb_out <= rom_down[addr];
     end
 
 endmodule

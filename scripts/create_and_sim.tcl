@@ -2,7 +2,7 @@
 # Vivado 2024.2 Batch Tcl Script: Create Project + Run Behavioral Simulation
 # =============================================================================
 set proj_root "C:/Users/User/Documents/KMUTT_UNI/Y2/Digital/Digital_final proj"
-set proj_dir  "$proj_root/vivado_proj"
+set proj_dir  "$proj_root/vivado_proj_v4"
 set proj_name "FlappyPigeon"
 set part_name "xc7a100tcsg324-1"
 

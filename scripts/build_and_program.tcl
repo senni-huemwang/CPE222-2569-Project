@@ -2,7 +2,7 @@
 # Vivado 2024.2 Batch Tcl Script: Synthesize, Implement, Write Bitstream & Flash
 # =============================================================================
 set proj_root "C:/Users/User/Documents/KMUTT_UNI/Y2/Digital/Digital_final proj"
-set proj_xpr  "$proj_root/vivado_proj/FlappyPigeon.xpr"
+set proj_xpr  "$proj_root/vivado_proj_v4/FlappyPigeon.xpr"
 set bit_copy  "$proj_root/FlappyPigeon.bit"
 
 open_project $proj_xpr
@@ -19,7 +19,7 @@ if {![string match "*write_bitstream Complete!*" $impl_status]} {
     exit 1
 }
 
-set bit_file "$proj_root/vivado_proj/FlappyPigeon.runs/impl_1/top.bit"
+set bit_file "$proj_root/vivado_proj_v4/FlappyPigeon.runs/impl_1/top.bit"
 file copy -force $bit_file $bit_copy
 puts "=== [2/3] Bitstream ready: $bit_copy ==="
 

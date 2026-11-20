@@ -2,8 +2,8 @@
 //////////////////////////////////////////////////////////////////////////////////
 // Module: pdm_mic
 // Description: Nexys A7-100T onboard PDM Microphone (MP34DT01) driver +
-//              256-tap decimation, EMA DC offset removal, peak-decay envelope,
-//              hysteresis threshold voice detector, and 16-LED VU meter.
+//              1024-tap decimation, EMA DC offset removal, 12x gain,
+//              smooth peak-decay envelope, and 16-LED VU meter.
 //////////////////////////////////////////////////////////////////////////////////
 module pdm_mic #(
     parameter integer CLK_FREQ_HZ = 100_000_000,
@@ -11,39 +11,40 @@ module pdm_mic #(
 )(
     input  wire        clk,
     input  wire        rst,
-    // Physical PDM Mic pins
     output reg         m_clk,
     input  wire        m_data,
     output wire        m_lrsel,
-    // Sensitivity switches SW[3:0] (0 = most sensitive, 15 = least sensitive)
-    input  wire [3:0]  sens_sw,
-    // Processed outputs
+    // Sensitivity switches SW[3:1]: SW[3]=Chaos, SW[2]=Normal, SW[1]=Sensitive
+    input  wire [2:0]  sens_sw,
     output wire [7:0]  volume,
     output wire [7:0]  threshold,
     output reg         voice_active,
     output reg  [15:0] vu_leds
 );
-    // M_LRSEL = 0 -> MP34DT01 drives data for rising-edge sampling
     assign m_lrsel = 1'b0;
 
-    localparam integer HALF_DIV = CLK_FREQ_HZ / (2 * PDM_FREQ_HZ); // 20 @ 100MHz/2.5MHz
+    localparam integer HALF_DIV = CLK_FREQ_HZ / (2 * PDM_FREQ_HZ); // 20
 
-    reg [4:0] clk_div;
-    reg       m_data_s0, m_data_s1;
-    reg [7:0] pdm_idx;
-    reg [8:0] ones_cnt;
+    reg [4:0]  clk_div;
+    reg        m_data_s0, m_data_s1;
+    reg [9:0]  pdm_idx;
+    reg [10:0] ones_cnt;
 
-    // 256-sample EMA DC tracker: dc_avg = 256 * mean(ones_cnt)
-    reg [16:0] dc_avg;
+    // 1024-sample EMA DC tracker: dc_avg = 1024 * mean(ones_cnt)
+    reg [20:0] dc_avg;
     reg [15:0] env;
 
-    wire signed [9:0] ac_diff = $signed({1'b0, ones_cnt}) - $signed({1'b0, dc_avg[16:8]});
-    wire        [9:0] abs_ac  = ac_diff[9] ? (~ac_diff + 10'd1) : ac_diff;
-    wire        [7:0] scaled_ac = (abs_ac >= 10'd128) ? 8'd255 : {abs_ac[6:0], 1'b0};
+    wire signed [11:0] ac_diff  = $signed({1'b0, ones_cnt}) - $signed({1'b0, dc_avg[20:10]});
+    wire        [11:0] abs_ac   = ac_diff[11] ? (~ac_diff + 12'd1) : ac_diff;
+    // 16x digital gain so 30cm speech spans 26%..100% of the Voice Meter bar
+    wire        [15:0] gained_ac = {abs_ac, 4'b0000};
+    wire        [7:0]  scaled_ac = (gained_ac >= 16'd255) ? 8'd255 : gained_ac[7:0];
     wire        [15:0] target_env = {scaled_ac, 8'd0};
 
     assign volume    = env[15:8];
-    assign threshold = 8'd12 + ({4'd0, sens_sw} * 8'd10); // Range: 12 .. 162
+    // Thresholds as % of 255: Chaos=70% (178), Normal=45% (115), Sensitive=26% (66)
+    assign threshold = sens_sw[2] ? 8'd178 :
+                       sens_sw[1] ? 8'd115 : 8'd66;
 
     always @(posedge clk) begin
         if (rst) begin
@@ -51,17 +52,15 @@ module pdm_mic #(
             m_clk        <= 1'b0;
             m_data_s0    <= 1'b0;
             m_data_s1    <= 1'b0;
-            pdm_idx      <= 8'd0;
-            ones_cnt     <= 9'd0;
-            dc_avg       <= 17'd32768; // Init to midpoint (128 * 256)
+            pdm_idx      <= 10'd0;
+            ones_cnt     <= 11'd0;
+            dc_avg       <= 21'd524288; // Midpoint 512 * 1024
             env          <= 16'd0;
             voice_active <= 1'b0;
         end else begin
-            // 2-FF input synchronizer for external PDM data
             m_data_s0 <= m_data;
             m_data_s1 <= m_data_s0;
 
-            // Generate 2.5 MHz m_clk
             if (clk_div >= HALF_DIV - 1) begin
                 clk_div <= 5'd0;
                 m_clk   <= ~m_clk;
@@ -69,44 +68,38 @@ module pdm_mic #(
                 clk_div <= clk_div + 5'd1;
             end
 
-            // Sample settled PDM bit near end of m_clk high half-cycle
             if (m_clk == 1'b1 && clk_div == (HALF_DIV - 4)) begin
-                if (pdm_idx == 8'd255) begin
-                    // End of 256-bit window (~9.77 kHz PCM rate)
-                    // Update DC offset tracker
-                    dc_avg <= dc_avg - {8'd0, dc_avg[16:8]} + {8'd0, ones_cnt};
+                if (pdm_idx == 10'd1023) begin
+                    // ~2.44 kHz PCM rate
+                    dc_avg <= dc_avg - {10'd0, dc_avg[20:10]} + {10'd0, ones_cnt};
 
-                    // Envelope detector (fast attack, crisp ~3.3ms release for low-latency flight)
+                    // Fast attack, smooth exponential decay (~52ms)
                     if (target_env > env) begin
                         env <= env + ((target_env - env) >> 1);
-                    end else if (env > 16'd32) begin
-                        env <= env - (env >> 5) - 16'd32;
                     end else begin
-                        env <= 16'd0;
+                        env <= env - (env >> 7);
                     end
 
-                    // Hysteresis threshold detector
                     if (env[15:8] >= threshold) begin
                         voice_active <= 1'b1;
-                    end else if (env[15:8] + 8'd4 < threshold) begin
+                    end else if (env[15:8] + 8'd3 < threshold) begin
                         voice_active <= 1'b0;
                     end
 
-                    pdm_idx  <= 8'd0;
-                    ones_cnt <= m_data_s1 ? 9'd1 : 9'd0;
+                    pdm_idx  <= 10'd0;
+                    ones_cnt <= m_data_s1 ? 11'd1 : 11'd0;
                 end else begin
-                    pdm_idx  <= pdm_idx + 8'd1;
-                    ones_cnt <= ones_cnt + (m_data_s1 ? 9'd1 : 9'd0);
+                    pdm_idx  <= pdm_idx + 10'd1;
+                    ones_cnt <= ones_cnt + (m_data_s1 ? 11'd1 : 11'd0);
                 end
             end
         end
     end
 
-    // 16-LED Thermometer VU meter
     integer i;
     always @(*) begin
         for (i = 0; i < 16; i = i + 1) begin
-            vu_leds[i] = (volume >= (i * 16 + 8));
+            vu_leds[i] = (volume >= (i * 16 + 6));
         end
     end
 
